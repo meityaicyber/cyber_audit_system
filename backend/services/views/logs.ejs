@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logs - <%= containerName %></title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { background-color: #f8f9fa; display: flex; flex-direction: column; height: 100vh; margin: 0; }
+        .log-header { background: #212529; color: white; padding: 15px 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.2); z-index: 10; }
+        .log-container { flex: 1; background-color: #1e1e1e; padding: 20px; overflow-y: auto; }
+        pre { color: #d4d4d4; font-family: 'Consolas', 'Monaco', 'Courier New', monospace; font-size: 14px; margin: 0; white-space: pre-wrap; word-wrap: break-word; }
+        .empty-logs { color: #888; font-style: italic; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; font-size: 1.2rem; }
+        
+        /* Custom scrollbar for dark theme */
+        .log-container::-webkit-scrollbar { width: 10px; height: 10px; }
+        .log-container::-webkit-scrollbar-track { background: #2d2d2d; }
+        .log-container::-webkit-scrollbar-thumb { background: #555; border-radius: 5px; }
+        .log-container::-webkit-scrollbar-thumb:hover { background: #777; }
+    </style>
+</head>
+<body>
+    <div class="log-header d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center">
+            <a href="/" class="btn btn-outline-light btn-sm me-3">
+                <i class="fas fa-arrow-left"></i> Back
+            </a>
+            <h5 class="mb-0">
+                <i class="fas fa-terminal me-2 text-secondary"></i> 
+                <%= containerName %> 
+                <% if(filter) { %>
+                    <span class="badge bg-danger ms-2"><i class="fas fa-bug me-1"></i> Error Logs</span>
+                <% } else { %>
+                    <span class="badge bg-primary ms-2">All Logs</span>
+                <% } %>
+            </h5>
+        </div>
+        <div>
+            <button class="btn btn-outline-light btn-sm me-2" id="copyBtn" onclick="copyLogs()">
+                <i class="fas fa-copy"></i> Copy
+            </button>
+            <button class="btn btn-outline-info btn-sm" onclick="location.reload()">
+                <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="log-container" id="logContainer">
+        <% if (logs.trim().length > 0) { %>
+            <pre id="logContent"><%= logs %></pre>
+        <% } else { %>
+            <div class="empty-logs">
+                <i class="fas fa-ghost fa-3x mb-3 text-secondary"></i>
+                <p>No logs found for this container or no errors detected.</p>
+            </div>
+        <% } %>
+    </div>
+
+    <script>
+        // Auto-scroll to bottom of logs on load
+        const logContainer = document.getElementById('logContainer');
+        logContainer.scrollTop = logContainer.scrollHeight;
+
+        function copyLogs() {
+            const logContent = document.getElementById('logContent');
+            if(logContent) {
+                navigator.clipboard.writeText(logContent.innerText).then(() => {
+                    const btn = document.getElementById('copyBtn');
+                    const originalHTML = btn.innerHTML;
+                    btn.innerHTML = '<i class="fas fa-check text-success"></i> Copied!';
+                    setTimeout(() => { btn.innerHTML = originalHTML; }, 2000);
+                });
+            }
+        }
+    </script>
+</body>
+</html>

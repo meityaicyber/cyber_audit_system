@@ -1,0 +1,192 @@
+volumes:
+  postgres_data:
+    driver: local
+  seaweedfs_data:
+    driver: local
+  seaweedfs_master_data:
+    driver: local
+  seaweedfs_filer_data:
+    driver: local
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cyber-audit-db
+    environment:
+      POSTGRES_DB: cyber_audit
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-supersecretpassword}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d cyber_audit"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  seaweedfs-master:
+    image: chrislusf/seaweedfs:latest
+    container_name: cyber-audit-seaweedfs-master
+    command: "master -ip=seaweedfs-master -ip.bind=0.0.0.0"
+    volumes:
+      - seaweedfs_master_data:/data
+    ports:
+      - "9333:9333"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9333/cluster/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  seaweedfs-volume:
+    image: chrislusf/seaweedfs:latest
+    container_name: cyber-audit-seaweedfs-volume
+    command: "volume -mserver=seaweedfs-master:9333 -ip.bind=0.0.0.0 -port=8082"
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+    volumes:
+      - seaweedfs_data:/data
+    ports:
+      - "8082:8082"
+    restart: unless-stopped
+
+  seaweedfs-filer:
+    image: chrislusf/seaweedfs:latest
+    container_name: cyber-audit-seaweedfs-filer
+    command: "filer -master=seaweedfs-master:9333 -ip.bind=0.0.0.0"
+    depends_on:
+      seaweedfs-master:
+        condition: service_healthy
+      seaweedfs-volume:
+        condition: service_started
+    volumes:
+      - seaweedfs_filer_data:/data
+    ports:
+      - "8888:8888"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8888/"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cyber-audit-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      seaweedfs-filer:
+        condition: service_healthy
+      ai-pipeline:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${DB_PASSWORD:-supersecretpassword}@postgres:5432/cyber_audit
+      SECRET_KEY: ${SECRET_KEY:-change-this-to-a-secure-256-bit-key-in-production}
+      FRONTEND_URL: http://localhost:3000
+      SEAWEEDFS_FILER_URL: ${SEAWEEDFS_FILER_URL:-http://seaweedfs-filer:8888}
+      AI_PIPELINE_URL: http://ai-pipeline:8001
+      RAG_SERVICE_URL: ${RAG_SERVICE_URL:-http://rag-service:8077}
+    volumes:
+      - ./models_cache:/root/.cache/huggingface
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+
+  ai-pipeline:
+    build:
+      context: ..
+      dockerfile: backend/ai_pipeline/Dockerfile
+    container_name: cyber-audit-ai-pipeline
+    volumes:
+      - ./models_cache:/root/.cache/huggingface
+      - ../document-standardization:/document-standardization
+    environment:
+      - R2J_MODEL_ENDPOINT=http://vllm:8000/v1
+    ports:
+      - "8001:8001"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    depends_on:
+      - vllm
+
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: cyber-audit-vllm
+    volumes:
+      - ../document-standardization:/document-standardization
+    ports:
+      - "8000:8000"
+    command: >
+      --model /document-standardization/models/Qwen3-VL-4B-Instruct-AWQ-4bit
+      --served-model-name Qwen/Qwen3-VL-4B-Instruct-AWQ
+      --max-model-len 32768
+      --enforce-eager
+      --gpu-memory-utilization 0.85
+      --trust-remote-code
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""
+    container_name: cyber-audit-frontend
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+
+  adminer:
+    image: adminer:latest
+    container_name: cyber-audit-adminer
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+
+  clamav:
+    image: clamav/clamav:latest
+    container_name: cyber-audit-clamav
+    restart: unless-stopped
+    ports:
+      - "3310:3310"
+
+  rag-service:
+    build:
+      context: ../chatbot
+      dockerfile: Dockerfile
+    container_name: cyber-audit-rag-service
+    restart: unless-stopped
+    ports:
+      - "8077:8077"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${DB_PASSWORD:-supersecretpassword}@postgres:5432/cyber_audit
+      - OLLAMA_HOST=http://host.docker.internal:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+

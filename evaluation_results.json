@@ -1,0 +1,232 @@
+{
+  "title": "Cybersecurity RAG Evaluation Benchmark",
+  "timestamp": "2026-11-04 12:59:05 UTC",
+  "overall_status": "PASSED",
+  "score_percentage": 93.3,
+  "summary": {
+    "total_tests": 15,
+    "passed": 14,
+    "warnings": 1,
+    "failed": 0
+  },
+  "results": [
+    {
+      "name": "DB: 'report_chunks' Table Exists",
+      "category": "Database",
+      "status": "PASS",
+      "latency_ms": 3.0348999998750514,
+      "details": "Table present in cyber_audit database.",
+      "metrics": {}
+    },
+    {
+      "name": "DB: pgvector Extension Enabled",
+      "category": "Database",
+      "status": "PASS",
+      "latency_ms": 0.7832000001144479,
+      "details": "Installed version: 0.8.7",
+      "metrics": {
+        "pgvector_version": "0.8.7"
+      }
+    },
+    {
+      "name": "DB: HNSW Cosine Index (ix_report_chunks_embedding)",
+      "category": "Database",
+      "status": "PASS",
+      "latency_ms": 1.2988999997105566,
+      "details": "Index active for fast approximate nearest neighbor search.",
+      "metrics": {
+        "hnsw_index": true
+      }
+    },
+    {
+      "name": "DB: Vector Count & Dimension Check",
+      "category": "Database",
+      "status": "PASS",
+      "latency_ms": 4.710700000032375,
+      "details": "Chunks: 2,563 across 180 reports | Dims: 1024 | Nulls: 0",
+      "metrics": {
+        "total_chunks": 2563,
+        "unique_reports": 180,
+        "null_vectors": 0,
+        "vector_dimensions": 1024
+      }
+    },
+    {
+      "name": "Model: Local Embedder (Qwen3-Embedding-0.6B)",
+      "category": "Models",
+      "status": "PASS",
+      "latency_ms": 4138.682300000255,
+      "details": "Weights loaded from Qwen3-Embedding-0.6B (dim: 1024)",
+      "metrics": {
+        "load_time_ms": 4138.682300000255,
+        "dimension": 1024
+      }
+    },
+    {
+      "name": "Retrieval: SEC-01 (Injection)",
+      "category": "Retrieval",
+      "status": "WARN",
+      "latency_ms": 90.71690000018862,
+      "details": "Score: 0.499 (dist: 0.501) | DB: 10.2ms | Top Match: Finding 995d6ebd-b127-4fab-808d-7caf02a4fff2: Stored Cr...",
+      "metrics": {
+        "similarity": 0.4987,
+        "cosine_distance": 0.5013,
+        "db_latency_ms": 10.18,
+        "embed_latency_ms": 80.25,
+        "top_chunk_id": "da064a55-b744-4d38-82c2-c1cc14c34114",
+        "top_section_id": "finding_995d6ebd-b127-4fab-808d-7caf02a4fff2",
+        "matched_keywords": []
+      }
+    },
+    {
+      "name": "Retrieval: SEC-02 (Remote Code Execution)",
+      "category": "Retrieval",
+      "status": "PASS",
+      "latency_ms": 77.72950000071432,
+      "details": "Score: 0.710 (dist: 0.290) | DB: 2.4ms | Top Match: Finding aa9fa8f9-45dc-4c1c-919c-92e35c6ef43c: Remote Co...",
+      "metrics": {
+        "similarity": 0.7103,
+        "cosine_distance": 0.2897,
+        "db_latency_ms": 2.36,
+        "embed_latency_ms": 75.05,
+        "top_chunk_id": "21a780f1-37d8-490c-b12a-0a91a944f8b5",
+        "top_section_id": "finding_aa9fa8f9-45dc-4c1c-919c-92e35c6ef43c",
+        "matched_keywords": [
+          "deserialization",
+          "remote code",
+          "execution",
+          "java"
+        ]
+      }
+    },
+    {
+      "name": "Retrieval: SEC-03 (Access Control)",
+      "category": "Retrieval",
+      "status": "PASS",
+      "latency_ms": 88.74780000041937,
+      "details": "Score: 0.589 (dist: 0.411) | DB: 2.6ms | Top Match: Finding f57aa9e6-e63d-4c34-8843-5b85e4bea0e8: Broken Ob...",
+      "metrics": {
+        "similarity": 0.5886,
+        "cosine_distance": 0.4114,
+        "db_latency_ms": 2.59,
+        "embed_latency_ms": 85.89,
+        "top_chunk_id": "231eb33c-0605-4354-9ea5-6f5dfe2e3957",
+        "top_section_id": "finding_f57aa9e6-e63d-4c34-8843-5b85e4bea0e8",
+        "matched_keywords": [
+          "authorization",
+          "bola",
+          "idor",
+          "account"
+        ]
+      }
+    },
+    {
+      "name": "Retrieval: SEC-04 (File Handling)",
+      "category": "Retrieval",
+      "status": "PASS",
+      "latency_ms": 86.18329999990237,
+      "details": "Score: 0.728 (dist: 0.272) | DB: 2.2ms | Top Match: Finding 361f1ea6-7cc4-4f73-9a04-303be5516b87: Path Trav...",
+      "metrics": {
+        "similarity": 0.7283,
+        "cosine_distance": 0.2717,
+        "db_latency_ms": 2.25,
+        "embed_latency_ms": 83.68,
+        "top_chunk_id": "98ae6df2-79a6-4dc2-9516-b4528422db4a",
+        "top_section_id": "finding_361f1ea6-7cc4-4f73-9a04-303be5516b87",
+        "matched_keywords": [
+          "path traversal",
+          "traversal",
+          "file read",
+          "download"
+        ]
+      }
+    },
+    {
+      "name": "Retrieval: SEC-05 (Cryptography)",
+      "category": "Retrieval",
+      "status": "PASS",
+      "latency_ms": 76.9378000004508,
+      "details": "Score: 0.767 (dist: 0.233) | DB: 2.8ms | Top Match: Finding f31220a4-cfb2-4e71-8e1d-98d9bde96617: Deprecate...",
+      "metrics": {
+        "similarity": 0.767,
+        "cosine_distance": 0.233,
+        "db_latency_ms": 2.82,
+        "embed_latency_ms": 73.85,
+        "top_chunk_id": "5f476d43-3227-4a88-a852-17d821f5543f",
+        "top_section_id": "finding_f31220a4-cfb2-4e71-8e1d-98d9bde96617",
+        "matched_keywords": [
+          "tls",
+          "cipher",
+          "protocol"
+        ]
+      }
+    },
+    {
+      "name": "Retrieval: SEC-06 (Secret Management)",
+      "category": "Retrieval",
+      "status": "PASS",
+      "latency_ms": 73.46019999931741,
+      "details": "Score: 0.588 (dist: 0.412) | DB: 2.2ms | Top Match: Finding 884f520b-de0d-469c-954d-099d0fa32125: Hardcoded...",
+      "metrics": {
+        "similarity": 0.5884,
+        "cosine_distance": 0.4116,
+        "db_latency_ms": 2.17,
+        "embed_latency_ms": 70.98,
+        "top_chunk_id": "79f5361e-c7d3-4e68-93d3-3c1015a12f86",
+        "top_section_id": "finding_884f520b-de0d-469c-954d-099d0fa32125",
+        "matched_keywords": [
+          "secret",
+          "credential",
+          "hardcoded",
+          "bundle"
+        ]
+      }
+    },
+    {
+      "name": "Scope: Report-Level Filtering",
+      "category": "Filtering",
+      "status": "PASS",
+      "latency_ms": 69.03569999940373,
+      "details": "All 5 returned chunks strictly matched report 00024c1a-38d9-4692-bff4-1ec42f60e69c",
+      "metrics": {
+        "report_id": "00024c1a-38d9-4692-bff4-1ec42f60e69c",
+        "chunks_returned": 5
+      }
+    },
+    {
+      "name": "LLM: Ollama Service Status",
+      "category": "Generation",
+      "status": "PASS",
+      "latency_ms": 13.916799999606155,
+      "details": "Ollama online at http://127.0.0.1:11434 (1 model(s) available)",
+      "metrics": {
+        "online": true,
+        "models": [
+          "qwen3:8b"
+        ]
+      }
+    },
+    {
+      "name": "Q&A: Structured Count Answering",
+      "category": "Generation",
+      "status": "PASS",
+      "latency_ms": 6370.771099999729,
+      "details": "Answer: The number of audit reports indexed is 182. (route: agent)",
+      "metrics": {
+        "route": "agent",
+        "answer_length": 43
+      }
+    },
+    {
+      "name": "Q&A: Vulnerability Synthesis & Citations",
+      "category": "Generation",
+      "status": "PASS",
+      "latency_ms": 5323.9779000005,
+      "details": "Answer length: 159 chars with 0 citation(s)",
+      "metrics": {
+        "citations_count": 0,
+        "latency_s": 5.33
+      }
+    }
+  ]
+}

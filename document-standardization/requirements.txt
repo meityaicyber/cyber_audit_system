@@ -1,0 +1,19 @@
+# Pipeline, malware pre-gate and GUI.
+pymupdf>=1.24.0
+pdfplumber>=0.10.0
+Pillow>=10.1.0
+jsonschema>=4.21.0
+python-dotenv>=1.0.0
+# IN-PROCESS inference (weights loaded inside the app)
+torch>=2.4.0
+torchvision>=0.19.0
+transformers>=4.57.0
+accelerate>=1.0.0
+# On a connected staging machine only, to fetch weights: python -m report_to_json.download
+huggingface_hub>=0.25.0
+# For Qwen3 AWQ 4-bit loading
+compressed-tensors>=0.8.0
+qwen-vl-utils>=0.0.8
+
+# Development dependencies
+pytest>=8.0

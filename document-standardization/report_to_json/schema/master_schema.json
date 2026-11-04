@@ -1,0 +1,132 @@
+{
+  "report_meta": {
+    "report_id": "string",
+    "report_title": "string",
+    "report_type": "string",
+    "report_release_date": "YYYY-MM-DD",
+    "report_version": "string",
+    "audit_type": "string",
+    "audit_period": { "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" },
+    "classification": "string"
+  },
+  "document_control": {
+    "document_title": "string",
+    "document_id": "string",
+    "document_version": "string",
+    "prepared_by": { "name": "string", "auditing_team_sr_no": "number" },
+    "reviewed_by": { "name": "string", "auditing_team_sr_no": "number" },
+    "approved_by": { "name": "string", "auditing_team_sr_no": "number" },
+    "released_by": { "name": "string", "auditing_team_sr_no": "number" },
+    "release_date": "YYYY-MM-DD",
+    "change_history": [
+      { "version": "string", "date": "YYYY-MM-DD", "remarks": "string" }
+    ],
+    "distribution_list": [
+      { "name": "string", "organization": "string", "designation": "string", "email": "string" }
+    ]
+  },
+  "engagement_scope": {
+    "assets": [
+      {
+        "sr_no": "number",
+        "asset_description": "string",
+        "url": "string",
+        "criticality": "string",
+        "internal_ip": "string",
+        "public_ip": "string",
+        "in_scope_functions": "string"
+      }
+    ],
+    "scope_updated_till": "YYYY-MM-DD",
+    "exclusions": ["string"],
+    "testing_credentials": [
+      { "role": "string", "account_identifier": "string", "auth_type": "string", "purpose": "string" }
+    ]
+  },
+  "auditing_team": [
+    {
+      "sr_no": "number",
+      "name": "string",
+      "designation": "string",
+      "email": "string",
+      "certifications": "string"
+    }
+  ],
+  "audit_timeline": {
+    "assessment_start_date": "YYYY-MM-DD",
+    "assessment_end_date": "YYYY-MM-DD"
+  },
+  "methodology": {
+    "standards_referred": ["string"]
+  },
+  "tools_used": [
+    { "sr_no": "number", "tool_name": "string", "version": "string", "license_type": "Open Source | Licensed" }
+  ],
+  "executive_summary": {
+    "total_findings": "number",
+    "severity_count": { "critical": "number", "high": "number", "medium": "number", "low": "number" },
+    "narrative": "string",
+    "summary_table": [
+      {
+        "sr_no": "number",
+        "finding_id": "string",
+        "affected_asset": "string",
+        "title": "string",
+        "cwe": "string",
+        "severity": "Critical | High | Medium | Low",
+        "status": "Open | Closed | Partially Remediated",
+        "new_or_repeat": "New | Repeat"
+      }
+    ]
+  },
+  "detailed_observations": [
+    {
+      "finding_id": "string",
+      "title": "string",
+      "status": "Open | Closed | Partially Remediated",
+      "severity": "Critical | High | Medium | Low",
+      "impact_level": "Major | Moderate | Minor",
+      "likelihood_level": "Easy | Moderate | Hard",
+      "cve_id": ["string"],
+      "cvss_score": "number",
+      "cvss_vector": "string",
+      "severity_rationale": "string",
+      "reported_epss_score": "number",
+      "observation_date": "YYYY-MM-DD",
+      "cwe": ["string"],
+      "affected_asset": ["string"],
+      "regulatory_references": ["string"],
+      "observation_description": "string",
+      "preconditions": "string",
+      "proof_of_concept": [
+        {
+          "sr_no": "number",
+          "type": "image | text",
+          "reference": "string",
+          "capture_date": "YYYY-MM-DD",
+          "is_retest": "boolean",
+          "redacted": "Yes | No | NA",
+          "description": "string"
+        }
+      ],
+      "impact": "string",
+      "likely_root_cause": "string",
+      "recommendation": "string",
+      "reference": "string",
+      "new_or_repeat": "New | Repeat"
+    }
+  ],
+  "appendices": {
+    "risk_rating_criteria": [
+      { "rating": "string", "description": "string", "impact_level": "string", "likelihood_level": "string" }
+    ],
+    "retest_closure": [
+      {
+        "finding_id": "string",
+        "retest_date": "YYYY-MM-DD",
+        "closure_evidence_ref": "number",
+        "status": "Open | Closed | Partially Remediated"
+      }
+    ]
+  }
+}

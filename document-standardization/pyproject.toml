@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "report-to-json"
+dynamic = ["version"]
+description = "Convert security audit reports (PDF/DOCX) into master-schema JSON"
+requires-python = ">=3.10"
+dependencies = [
+    "pymupdf>=1.24.0",
+    "pdfplumber>=0.10.0",
+    "Pillow>=10.1.0",
+    "jsonschema>=4.21.0",
+    "yara-python>=4.3.0",
+    "python-dotenv>=1.0.0",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+models = ["torch>=2.4.0", "transformers>=4.57.0", "accelerate>=1.0.0", "huggingface_hub>=0.25.0"]
+dev = ["pytest>=8.0"]
+
+[project.gui-scripts]
+report-to-json = "report_to_json.gui:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "report_to_json.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["report_to_json*"]
+
+[tool.setuptools.package-data]
+report_to_json = ["schema/*.json", "schema/*.md", "security/rules/*.yar"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

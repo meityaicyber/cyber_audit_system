@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+var/catalog.sqlite3-wal
+var/catalog.sqlite3-shm
+tests/
+
