@@ -1,4 +1,6 @@
 volumes:
+  rag_var:
+    driver: local
   postgres_data:
     driver: local
   seaweedfs_data:
@@ -186,6 +188,11 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:${DB_PASSWORD:-supersecretpassword}@postgres:5432/cyber_audit
       - OLLAMA_HOST=http://host.docker.internal:11434
+      - RAGAUDIT_GENERATION__BASE_URL=http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - rag_var:/app/var
     depends_on:
       postgres:
         condition: service_healthy

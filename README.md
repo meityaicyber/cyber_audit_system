@@ -15,7 +15,7 @@ cyber-audit-system/
 │   ├── ragaudit/             # RAG engine (dense retrieval, hybrid search, citation tracking)
 │   ├── start_rag.py          # Unified one-click RAG launcher (migrations + sync + server)
 │   ├── evaluate_rag.py       # Automated CERT-In benchmark test suite (sub-10ms retrieval)
-│   └── var/catalog.sqlite3   # Synchronized audit catalog (183 reports, 2,572 findings)
+│   └── var/catalog.sqlite3   # Chat catalogue, built by start_rag.py (vectors: PostgreSQL schema `rag`)
 │
 └── document-standardization/ # Document Standardization Pipeline Core
 ```

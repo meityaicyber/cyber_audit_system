@@ -372,3 +372,24 @@ def test_written_answer_from_list_reports_is_not_refused(tmp_path, corpus):
     assert not answer.abstained, answer.text
     assert answer.text == "3 reports are indexed."
     app.close()
+
+
+def test_step_timeout_with_evidence_still_writes_the_answer(tmp_path, corpus):
+    """Live qwen3:8b on CPU: all findings fetched, then one step timed out, and
+    the answer was thrown away."""
+    from ragaudit.generate.llm import LLMUnavailable
+
+    class TimesOut(ScriptedLLM):
+        def chat(self, messages, *, format_schema=None, tools=None, max_tokens=None, timeout_s=None):
+            if not format_schema and self._i >= len(self.turns) and messages[-1]["role"] != "user":
+                raise LLMUnavailable("Read timed out")
+            return super().chat(messages, format_schema=format_schema, tools=tools,
+                                max_tokens=max_tokens, timeout_s=timeout_s)
+
+    llm = TimesOut([[("query_findings", {"severity": "Medium"})],
+                    [("search_reports", {"query": "medium findings"})]])
+    app = _app(tmp_path, corpus, llm)
+    answer, _ = app.build_chat().ask("tell me in detail about medium level findings")
+    assert llm.finalize_prompts and answer.citations and not answer.abstained
+    assert "llm_unavailable:partial" in answer.review_flags
+    app.close()

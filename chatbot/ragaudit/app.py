@@ -10,7 +10,7 @@ import logging
 
 from ragaudit.chat.service import ChatService
 from ragaudit.chat.session import SessionStore
-from ragaudit.config import Settings, load_settings
+from ragaudit.config import Settings, load_settings, pg_dsn
 from ragaudit.generate.icl import FixedFewShot, RetrievalFewShot, ZeroShot, load_bank
 from ragaudit.generate.llm import OllamaClient
 from ragaudit.ingest.chunking import FieldAwareChunker
@@ -93,6 +93,7 @@ class Application:
                 hnsw_m=cfg.hnsw_m,
                 hnsw_ef_construction=cfg.hnsw_ef_construction,
                 hnsw_ef_search=cfg.hnsw_ef_search,
+                pg_dsn=pg_dsn(self.settings),
             )
         return self._index
 

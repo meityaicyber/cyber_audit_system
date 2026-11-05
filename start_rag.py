@@ -31,6 +31,7 @@ ROOT = CURRENT_FILE.parent
 
 CANDIDATE_VENVS = [
     ROOT / ".venv" / "Scripts" / "python.exe",
+    ROOT / "chatbot" / ".venv" / "Scripts" / "python.exe",
     ROOT / "ragengine" / ".venv" / "Scripts" / "python.exe",
     ROOT.parent / "rag" / "ragengine" / ".venv" / "Scripts" / "python.exe",
     Path(r"E:\rag\ragengine\.venv\Scripts\python.exe"),
@@ -41,10 +42,7 @@ for vpy in CANDIDATE_VENVS:
         cmd = [str(vpy), str(CURRENT_FILE)] + sys.argv[1:]
         sys.exit(subprocess.call(cmd))
 
-if (ROOT / "ragengine").exists():
-    ENGINE_DIR = ROOT / "ragengine"
-else:
-    ENGINE_DIR = ROOT
+ENGINE_DIR = next((ROOT / d for d in ("chatbot", "ragengine") if (ROOT / d / "ragaudit").exists()), ROOT)
 
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
@@ -61,7 +59,6 @@ import argparse
 import asyncio
 import json
 import logging
-import sqlite3
 import time
 import urllib.error
 import urllib.request
@@ -204,98 +201,56 @@ def build_chunks(report_id: uuid.UUID, data: Dict[str, Any], observations: List[
 
 
 async def sync_catalog_sqlite(pool) -> None:
-    """Sync reports, findings, and chunks into local SQLite catalogue (var/catalog.sqlite3)."""
-    catalog_path = ENGINE_DIR / "var" / "catalog.sqlite3"
-    if not catalog_path.parent.exists():
-        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    """Index Postgres reports into the chat engine through its normal ingest.
 
-    sev_rank = {"Critical": 5, "High": 4, "Medium": 3, "Low": 2, "Informational": 1}
+    Reports go through the same pipeline as any other source: validation,
+    CWE/CVE tables and search in var/catalog.sqlite3, vectors in the rag schema.
+    Reports already exported are left alone, and unchanged files are
+    skipped by the ingest, so a restart only embeds what is new.
+    """
+    from ragaudit.config import load_settings
+    from ragaudit.corpus_tools import postgres_report_document
+
+    sync_dir = load_settings().data_dir / "pg_sync"
+    sync_dir.mkdir(parents=True, exist_ok=True)
 
     async with pool.acquire() as conn:
         reports_rows = await conn.fetch("""
-            SELECT r.report_id, r.original_filename, r.created_at, rd.data 
+            SELECT r.report_id, r.original_filename, rd.data
             FROM reports r
             JOIN reports_data rd ON r.report_id = rd.report_id
         """)
         obs_rows = await conn.fetch("""
-            SELECT report_id, finding_id, title, severity, status, cvss_score,
-                   observation_description, impact, recommendation
+            SELECT report_id, finding_id, title, severity, status, cvss_score, cvss_vector, cwe, cve_id,
+                   affected_asset, observation_description, impact, likely_root_cause, recommendation,
+                   reference, regulatory_references, severity_rationale, observation_date
             FROM detailed_observations
         """)
-        chunk_rows = await conn.fetch("""
-            SELECT chunk_id, report_id, section_id, finding_id, chunk, context_prefix, token_count
-            FROM report_chunks
-        """)
 
-    conn_sq = sqlite3.connect(str(catalog_path))
-    try:
-        conn_sq.execute("PRAGMA foreign_keys = OFF;")
-        for r in reports_rows:
-            rid = str(r["report_id"])
-            fname = r["original_filename"] or "audit_report.json"
-            raw = r["data"]
-            data = json.loads(raw) if isinstance(raw, str) else raw
-            meta = data.get("metadata", {})
-            conn_sq.execute("""
-                INSERT OR REPLACE INTO reports (
-                    report_id, title, report_type, audit_type, organisation, auditor,
-                    classification, release_date, source_file, ingest_status
-                ) VALUES (?,?,?,?,?,?,?,?,?,?)
-            """, (
-                rid,
-                meta.get("title") or fname,
-                meta.get("report_type") or "Cybersecurity Audit",
-                meta.get("audit_type") or "Security Assessment",
-                meta.get("target_entity") or meta.get("organization") or "Auditee",
-                meta.get("auditor") or "CERT-In Empanelled Auditor",
-                meta.get("classification") or "Restricted",
-                str(meta.get("audit_date") or r["created_at"].strftime("%Y-%m-%d")),
-                fname,
-                "indexed"
-            ))
+    observations: Dict[str, List[Dict[str, Any]]] = {}
+    for o in obs_rows:
+        row = {k: v for k, v in dict(o).items() if k != "report_id" and v is not None}
+        observations.setdefault(str(o["report_id"]), []).append(row)
 
-        for o in obs_rows:
-            rid = str(o["report_id"])
-            fid = str(o["finding_id"] or "")
-            fkey = f"{rid}:{fid}"
-            sev = str(o["severity"] or "Unknown")
-            conn_sq.execute("""
-                INSERT OR REPLACE INTO findings (
-                    finding_key, report_id, finding_id, title, severity, severity_rank,
-                    status, cvss_score, observation, impact, recommendation
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-            """, (
-                fkey, rid, fid, str(o["title"] or ""),
-                sev, sev_rank.get(sev, 0),
-                str(o["status"] or "Open"),
-                float(o["cvss_score"]) if o["cvss_score"] is not None else None,
-                str(o["observation_description"] or ""),
-                str(o["impact"] or ""),
-                str(o["recommendation"] or "")
-            ))
+    exported = 0
+    for r in reports_rows:
+        rid = str(r["report_id"])
+        target = sync_dir / f"{rid}.json"
+        if target.exists():
+            continue
+        raw = r["data"]
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        doc = postgres_report_document(data or {}, observations.get(rid, []), rid, r["original_filename"] or "")
+        target.write_text(json.dumps(doc, default=str), encoding="utf-8")
+        exported += 1
 
-        for c in chunk_rows:
-            cid = str(c["chunk_id"])
-            rid = str(c["report_id"])
-            fid = str(c["finding_id"] or "") if c["finding_id"] else None
-            text = str(c["chunk"] or "")
-            conn_sq.execute("""
-                INSERT OR REPLACE INTO chunks (
-                    chunk_id, report_id, finding_id, section, text, context_prefix, token_count
-                ) VALUES (?,?,?,?,?,?,?)
-            """, (
-                cid, rid, fid, str(c["section_id"] or ""),
-                text, str(c["context_prefix"] or ""),
-                int(c["token_count"] or len(text.split()))
-            ))
-            conn_sq.execute("INSERT OR REPLACE INTO chunks_fts (rowid, text, chunk_id, report_id) VALUES (?,?,?,?)",
-                           (abs(hash(cid)) % (2**63 - 1), text, cid, rid))
-
-        conn_sq.execute("PRAGMA foreign_keys = ON;")
-        conn_sq.commit()
-        logger.info(f"[ OK ] Web Console Catalogue Synchronized: {len(reports_rows)} reports, {len(chunk_rows)} chunks ready in UI.")
-    finally:
-        conn_sq.close()
+    logger.info(f"Exported {exported} new report(s) of {len(reports_rows)}. Running ingest...")
+    # A child process, so the embedding model's memory is freed before the server loads its own.
+    code = subprocess.call([sys.executable, "-m", "ragaudit.cli", "ingest", str(sync_dir)], cwd=str(ENGINE_DIR))
+    if code:
+        logger.warning(f"Ingest exited with code {code}; see its output above. Serving what was indexed.")
+    else:
+        logger.info("[ OK ] Web console catalogue and vector index are in sync with PostgreSQL.")
 
 
 async def sync_past_reports(force: bool = False) -> None:
@@ -458,6 +413,10 @@ def main() -> None:
 
     banner("Step 1/3: Checking PostgreSQL & Running pgvector Migrations")
     db_ok = asyncio.run(check_and_migrate_db())
+
+    if db_ok:
+        os.environ["RAGAUDIT_RETRIEVAL__BACKEND"] = "pgvector"
+        os.environ["RAGAUDIT_RETRIEVAL__PG_DSN"] = DB_URL
 
     if db_ok and not args.skip_ingest:
         banner("Step 2/3: Checking & Synchronizing Historical Reports")

@@ -109,32 +109,28 @@ def _aggregate_findings(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     if second and second not in valid:
         raise ToolError(f"'then_by' must be one of {sorted(valid)}")
 
-    findings = ctx.catalog.findings(report_ids=report_ids)
-    key = {"severity": lambda f: f.severity.value, "status": lambda f: f.status.value,
-           "report": lambda f: f.report_id}
+    column = {"severity": "severity", "status": "status", "report": "report_id"}
 
     if second is None:
-        counts: dict[str, int] = {}
-        for f in findings:
-            counts[key[by](f)] = counts.get(key[by](f), 0) + 1
+        counts = dict(ctx.catalog.finding_counts([column[by]], report_ids))
         return ToolResult(
-            content={"dimension": by, "counts": counts, "total": len(findings)},
+            content={"dimension": by, "counts": counts, "total": sum(counts.values())},
             blocks=[{"kind": "chart", "chart": "bar", "title": f"Findings by {by}",
                      "x": list(counts.keys()), "series": [{"name": by, "values": list(counts.values())}]}],
         )
 
     cross: dict[str, dict[str, int]] = {}
     second_keys: list[str] = []
-    for f in findings:
-        a, b = key[by](f), key[second](f)
-        cross.setdefault(a, {})
-        cross[a][b] = cross[a].get(b, 0) + 1
+    total = 0
+    for a, b, n in ctx.catalog.finding_counts([column[by], column[second]], report_ids):
+        cross.setdefault(a, {})[b] = n
+        total += n
         if b not in second_keys:
             second_keys.append(b)
     x = list(cross.keys())
     series = [{"name": sk, "values": [cross[a].get(sk, 0) for a in x]} for sk in second_keys]
     return ToolResult(
-        content={"rows": by, "columns": second, "cross_tab": cross, "total": len(findings)},
+        content={"rows": by, "columns": second, "cross_tab": cross, "total": total},
         blocks=[{"kind": "chart", "chart": "stacked_bar", "title": f"{by} by {second}",
                  "x": x, "series": series}],
     )
@@ -143,24 +139,15 @@ def _aggregate_findings(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
 def _distinct_values(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:
     field = as_str(args.get("field") or "severity").lower()
     report_ids = scoped_report_ids(ctx, args)
-    findings = ctx.catalog.findings(report_ids=report_ids)
+    if field not in ("severity", "status", "cwe", "cve", "asset"):
+        raise ToolError(f"'field' must be one of {sorted(['asset', 'cve', 'cwe', 'severity', 'status'])}")
 
-    extract = {
-        "severity": lambda f: [f.severity.value],
-        "status": lambda f: [f.status.value],
-        "cwe": lambda f: f.cwe_ids,
-        "cve": lambda f: f.cve_ids,
-        "asset": lambda f: f.affected_assets,
-    }
-    if field not in extract:
-        raise ToolError(f"'field' must be one of {sorted(extract)}")
-
-    counts: dict[str, int] = {}
-    for f in findings:
-        for v in extract[field](f):
-            if v:
-                counts[v] = counts.get(v, 0) + 1
-    return ToolResult(content={"field": field, "values": dict(sorted(counts.items(), key=lambda kv: -kv[1]))})
+    if field in ("severity", "status"):
+        rows = ctx.catalog.finding_counts([field], report_ids)
+        counts = dict(sorted(((v, n) for v, n in rows if v), key=lambda kv: -kv[1]))
+    else:
+        counts = ctx.catalog.value_counts(field, report_ids)
+    return ToolResult(content={"field": field, "values": counts})
 
 
 def _top_values(ctx: ToolContext, args: dict[str, Any]) -> ToolResult:

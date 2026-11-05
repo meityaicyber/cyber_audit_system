@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from collections import Counter
@@ -267,6 +268,11 @@ def cmd_reset(args: argparse.Namespace) -> int:
             shutil.rmtree(target)
         elif target.exists():
             target.unlink()
+    if settings.retrieval.backend == "pgvector":
+        from ragaudit.config import pg_dsn
+        from ragaudit.store.vectors import drop_pg_index
+
+        drop_pg_index(pg_dsn(settings))
     print("reset done; ingest again to rebuild.")
     return 0
 

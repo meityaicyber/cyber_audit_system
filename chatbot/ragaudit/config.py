@@ -7,6 +7,7 @@ reads a hardcoded host, path or model name at call time -- D03 records why.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -66,7 +67,8 @@ class RetrievalSettings(BaseModel):
     # Rank-based, not score-based: fused and cross-encoder scores are not on a
     # common scale, so an absolute cutoff is meaningless. See D05.
     min_rank_confidence: int = 3
-    backend: Literal["numpy", "faiss"] = "numpy"
+    backend: Literal["numpy", "faiss", "pgvector"] = "numpy"
+    pg_dsn: str = ""                  # pgvector only; falls back to DATABASE_URL
     hnsw_m: int = 32
     hnsw_ef_construction: int = 200
     hnsw_ef_search: int = 64
@@ -177,3 +179,9 @@ class Settings(BaseSettings):
 
 def load_settings(**overrides) -> Settings:
     return Settings(**overrides)
+
+
+def pg_dsn(settings) -> str:
+    """The chat vector store's DSN, in libpq form (no SQLAlchemy driver suffix)."""
+    dsn = settings.retrieval.pg_dsn or os.environ.get("DATABASE_URL", "")
+    return dsn.replace("postgresql+asyncpg://", "postgresql://")

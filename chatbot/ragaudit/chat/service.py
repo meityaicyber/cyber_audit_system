@@ -212,7 +212,11 @@ class ChatService:
 
         # Infrastructure failure or a dead backend: abstain, but keep whatever
         # exact structured results and blocks were gathered — they are true.
-        if run.stop_reason in (StopReason.LLM_UNAVAILABLE, StopReason.INFRA_ERROR):
+        # With passages in hand, a loop step that timed out is no reason to give
+        # up: finalize still tries, and fails over here if the backend is dead.
+        if run.stop_reason is StopReason.INFRA_ERROR or (
+            run.stop_reason is StopReason.LLM_UNAVAILABLE and not len(run.ledger)
+        ):
             return self._agent_failed(run, run.stop_reason)
 
         shortcut = self._shortcut_answer(run, question, ctx)
@@ -266,7 +270,7 @@ class ChatService:
         # labelled partial, rather than discarding the work.
         partial = run.stop_reason in (
             StopReason.MAX_STEPS, StopReason.DEADLINE, StopReason.TOKEN_BUDGET,
-            StopReason.NO_PROGRESS, StopReason.TOOL_ERRORS,
+            StopReason.NO_PROGRESS, StopReason.TOOL_ERRORS, StopReason.LLM_UNAVAILABLE,
         )
 
         prompt = build_agent_finalize_prompt(

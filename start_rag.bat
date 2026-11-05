@@ -5,8 +5,8 @@ echo   Launching Cybersecurity RAG Engine, Migrations, and Server
 echo ========================================================================
 cd /d "%~dp0"
 
-IF EXIST "ragengine\.venv\Scripts\python.exe" (
-    "ragengine\.venv\Scripts\python.exe" ragengine\start_rag.py %*
+IF EXIST "chatbot\.venv\Scripts\python.exe" (
+    "chatbot\.venv\Scripts\python.exe" start_rag.py %*
 ) ELSE IF EXIST ".venv\Scripts\python.exe" (
     ".venv\Scripts\python.exe" start_rag.py %*
 ) ELSE (

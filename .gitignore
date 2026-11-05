@@ -21,6 +21,7 @@ yarn-debug.log*
 
 # Large Model Weights & Caches
 models/
+!backend/backend/app/models/
 models_cache/
 .cache/
 *.safetensors

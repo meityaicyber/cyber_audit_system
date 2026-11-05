@@ -9,7 +9,8 @@ postfilter that falls back to unfiltered results is a cross-tenant disclosure.
 
 *Pluggable backend.* ``NumpyVectorIndex`` is exact and has no native
 dependency, so the test suite and small deployments need nothing staged.
-``FaissVectorIndex`` builds an HNSW graph for the production corpus. They
+``FaissVectorIndex`` builds an HNSW graph for a large single-machine corpus.
+``PgVectorIndex`` keeps vectors in PostgreSQL for the production corpus. They
 implement the same protocol and are chosen by configuration, so the retrieval
 code never knows which is in use.
 
@@ -23,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Protocol
@@ -256,6 +258,155 @@ class FaissVectorIndex:
         return index
 
 
+#: Everything lives in its own schema: the backend's tables are not touched,
+#: and its Alembic autogenerate (which looks at the default schema only) never
+#: proposes dropping these.
+PG_SCHEMA = "rag"
+
+
+class PgVectorIndex:
+    """Vectors in PostgreSQL with an HNSW cosine index.
+
+    Nothing is held in process memory and every write commits, so ``save`` has
+    nothing to do. Separate from the backend's ``report_chunks`` because chat
+    ids are text (``ACME-1``), while that table needs UUIDs with a foreign key.
+
+    A scoped search must stay a prefilter (see the module docstring), and an
+    HNSW scan filters only afterwards, returning fewer rows than asked for. The
+    ``+ 0`` stops the planner using HNSW there, so a scoped search reads the
+    report's rows through the report_id index and sorts them exactly.
+    """
+
+    backend = "pgvector"
+
+    def __init__(self, dsn: str, dimension: int, m: int = 32, ef_construction: int = 200,
+                 ef_search: int = 64) -> None:
+        self.dsn = dsn
+        self.dimension = dimension
+        self.ef_search = ef_search
+        self._lock = threading.Lock()
+        self._conn = None
+        with self._lock, self._db().transaction():
+            conn = self._conn
+            # Launcher, server and ingest can all start at once.
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext('ragaudit.vectors'))")
+            conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            conn.execute(f"CREATE SCHEMA IF NOT EXISTS {PG_SCHEMA}")
+            conn.execute(f"CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.index_meta "
+                         "(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            row = conn.execute(f"SELECT value FROM {PG_SCHEMA}.index_meta WHERE key = 'dimension'").fetchone()
+            if row and int(row[0]) != dimension:
+                raise RuntimeError(
+                    f"stored index has dimension {row[0]} but the configured embedding model "
+                    f"produces {dimension}. The embedding model was changed: run "
+                    "python run.py reset --yes and ingest again, or restore the previous model in .env."
+                )
+            conn.execute(f"""CREATE TABLE IF NOT EXISTS {PG_SCHEMA}.vectors (
+                chunk_id TEXT PRIMARY KEY,
+                report_id TEXT NOT NULL,
+                embedding vector({int(dimension)}) NOT NULL)""")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS ix_vectors_report ON {PG_SCHEMA}.vectors (report_id)")
+            conn.execute(f"CREATE INDEX IF NOT EXISTS ix_vectors_embedding ON {PG_SCHEMA}.vectors "
+                         f"USING hnsw (embedding vector_cosine_ops) "
+                         f"WITH (m = {int(m)}, ef_construction = {int(ef_construction)})")
+            conn.execute(f"INSERT INTO {PG_SCHEMA}.index_meta VALUES ('dimension', %s) "
+                         "ON CONFLICT (key) DO NOTHING", (str(dimension),))
+
+    def _db(self):
+        """The connection, reopened if the server restarted."""
+        import psycopg
+
+        if self._conn is None or self._conn.closed or self._conn.broken:
+            self._conn = psycopg.connect(self.dsn, autocommit=True)
+        return self._conn
+
+    @staticmethod
+    def _literal(vector: np.ndarray) -> str:
+        return "[" + ",".join(f"{x:.7g}" for x in vector) + "]"
+
+    @property
+    def fingerprint(self) -> str:
+        with self._lock:
+            row = self._db().execute(
+                f"SELECT value FROM {PG_SCHEMA}.index_meta WHERE key = 'fingerprint'").fetchone()
+        return row[0] if row else ""
+
+    @fingerprint.setter
+    def fingerprint(self, value: str) -> None:
+        with self._lock:
+            self._db().execute(
+                f"INSERT INTO {PG_SCHEMA}.index_meta VALUES ('fingerprint', %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (value,))
+
+    def add(self, ids: Sequence[str], vectors: np.ndarray, report_ids: Sequence[str]) -> None:
+        if len(ids) == 0:
+            return
+        if len(ids) != len(report_ids):
+            raise ValueError("ids and report_ids must be the same length")
+        vectors = _normalise(vectors)
+        if vectors.shape[0] != len(ids):
+            raise ValueError(f"got {vectors.shape[0]} vectors for {len(ids)} ids")
+        if vectors.shape[1] != self.dimension:
+            raise ValueError(
+                f"embedding dimension {vectors.shape[1]} does not match index dimension "
+                f"{self.dimension}; the index was built with a different model"
+            )
+        rows = [(i, r, self._literal(v)) for i, r, v in zip(ids, report_ids, vectors)]
+        with self._lock, self._db().transaction(), self._conn.cursor() as cur:
+            cur.executemany(
+                f"INSERT INTO {PG_SCHEMA}.vectors (chunk_id, report_id, embedding) "
+                "VALUES (%s, %s, %s::vector) ON CONFLICT (chunk_id) DO UPDATE "
+                "SET report_id = EXCLUDED.report_id, embedding = EXCLUDED.embedding", rows)
+
+    def search(
+        self, query: np.ndarray, top_k: int, allowed_report_ids: Sequence[str] | None = None
+    ) -> list[tuple[str, float]]:
+        q = self._literal(_normalise(query)[0])
+        table = f"{PG_SCHEMA}.vectors"
+        with self._lock:
+            conn = self._db()
+            if allowed_report_ids is not None:
+                if not allowed_report_ids:
+                    return []
+                rows = conn.execute(
+                    f"SELECT chunk_id, 1 - (embedding <=> %s::vector) FROM {table} "
+                    "WHERE report_id = ANY(%s) ORDER BY (embedding <=> %s::vector) + 0 LIMIT %s",
+                    (q, list(allowed_report_ids), q, top_k)).fetchall()
+            else:
+                with conn.transaction():
+                    # ef_search caps how many rows HNSW can return.
+                    conn.execute("SELECT set_config('hnsw.ef_search', %s, true)",
+                                 (str(min(1000, max(self.ef_search, top_k))),))
+                    rows = conn.execute(
+                        f"SELECT chunk_id, 1 - (embedding <=> %s::vector) FROM {table} "
+                        "ORDER BY embedding <=> %s::vector LIMIT %s", (q, q, top_k)).fetchall()
+        return [(r[0], float(r[1])) for r in rows]
+
+    def remove_report(self, report_id: str) -> None:
+        with self._lock:
+            self._db().execute(f"DELETE FROM {PG_SCHEMA}.vectors WHERE report_id = %s", (report_id,))
+
+    def vector_count(self, report_id: str) -> int:
+        with self._lock:
+            return self._db().execute(
+                f"SELECT count(*) FROM {PG_SCHEMA}.vectors WHERE report_id = %s", (report_id,)).fetchone()[0]
+
+    def __len__(self) -> int:
+        with self._lock:
+            return self._db().execute(f"SELECT count(*) FROM {PG_SCHEMA}.vectors").fetchone()[0]
+
+    def save(self, directory: str | Path) -> None:
+        """Nothing to do: every write has already committed."""
+
+
+def drop_pg_index(dsn: str) -> None:
+    """Delete the chat vectors. The backend's tables are in another schema."""
+    import psycopg
+
+    with psycopg.connect(dsn, autocommit=True) as conn:
+        conn.execute(f"DROP SCHEMA IF EXISTS {PG_SCHEMA} CASCADE")
+
+
 def _atomic_save(out: Path, vectors: np.ndarray, meta: dict) -> None:
     """Write vectors.npy and ids.json so a crash mid-save never leaves a
     half-written pair. Each file is written to a temp name then renamed;
@@ -279,15 +430,27 @@ def open_index(
     hnsw_ef_construction: int = 200,
     hnsw_ef_search: int = 64,
     fingerprint: str | None = None,
+    pg_dsn: str = "",
 ) -> VectorIndex:
     """Load the index from ``directory``, or create an empty one.
 
     A stored index records the dimension it was built with. Loading it under a
     different embedding model raises rather than silently mixing vector spaces.
     """
-    path = Path(directory)
-    exists = (path / "ids.json").exists() and (path / "vectors.npy").exists()
-    index = _open(path, exists, dimension, backend, hnsw_m, hnsw_ef_construction, hnsw_ef_search)
+    if backend == "pgvector":
+        if not pg_dsn:
+            raise RuntimeError("retrieval.backend is 'pgvector' but no database is configured. "
+                               "Set RAGAUDIT_RETRIEVAL__PG_DSN or DATABASE_URL.")
+        try:
+            import psycopg  # noqa: F401
+        except ImportError as exc:
+            raise RuntimeError("retrieval.backend is 'pgvector' but psycopg is not installed. "
+                               'Run: pip install "psycopg[binary]"') from exc
+        index = PgVectorIndex(pg_dsn, dimension, hnsw_m, hnsw_ef_construction, hnsw_ef_search)
+    else:
+        path = Path(directory)
+        exists = (path / "ids.json").exists() and (path / "vectors.npy").exists()
+        index = _open(path, exists, dimension, backend, hnsw_m, hnsw_ef_construction, hnsw_ef_search)
     if fingerprint:
         stored = getattr(index, "fingerprint", "")
         if stored and stored != fingerprint and len(index) > 0:

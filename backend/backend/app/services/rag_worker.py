@@ -154,11 +154,12 @@ async def _save_pgvector_chunks(db_report_id: uuid.UUID):
         logger.info(f"[RAG-Worker] PGVector chunking result for report {db_report_id}: {result}")
 
 
-def _call_rag_ingest_api(pipeline_report_id: str, report_data: Dict[str, Any]):
+def _call_rag_ingest_api(db_report_id: uuid.UUID, pipeline_report_id: str, report_data: Dict[str, Any]):
     """Call the RAG service API to run the ingest pipeline."""
     rag_url = f"{settings.RAG_SERVICE_URL}/api/ingest-json"
     payload = {
         "report_id": pipeline_report_id,
+        "source_id": str(db_report_id),
         "data": report_data,
     }
     logger.info(f"[RAG-Worker] Calling RAG ingest API at {rag_url} for report '{pipeline_report_id}'...")
@@ -194,7 +195,7 @@ def process_and_index_report_job(
             logger.warning(f"[RAG-Worker] Error creating pgvector chunks for {db_report_id}: {chunk_err}")
 
         # Step 3: Call RAG ingest pipeline via API with pipeline_report_id
-        _call_rag_ingest_api(pipeline_report_id, report_data)
+        _call_rag_ingest_api(db_report_id, pipeline_report_id, report_data)
 
         logger.info(f"[RAG-Worker] Completed processing and indexing job for report {db_report_id} ('{pipeline_report_id}')")
     except Exception as exc:

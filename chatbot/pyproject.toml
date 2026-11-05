@@ -15,6 +15,7 @@ dependencies = [
 [project.optional-dependencies]
 models = ["torch>=2.1", "transformers>=4.51", "huggingface_hub>=0.23"]
 ann = ["faiss-cpu>=1.7"]
+pg = ["psycopg[binary]>=3.1", "asyncpg>=0.29", "python-dotenv>=1.0"]
 dev = ["pytest>=7", "httpx>=0.25"]
 
 [project.scripts]

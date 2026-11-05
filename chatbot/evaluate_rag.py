@@ -38,6 +38,7 @@ ROOT = CURRENT_FILE.parent
 
 CANDIDATE_VENVS = [
     ROOT / ".venv" / "Scripts" / "python.exe",
+    ROOT / "chatbot" / ".venv" / "Scripts" / "python.exe",
     ROOT / "ragengine" / ".venv" / "Scripts" / "python.exe",
     ROOT.parent / "rag" / "ragengine" / ".venv" / "Scripts" / "python.exe",
     Path(r"E:\rag\ragengine\.venv\Scripts\python.exe"),
@@ -48,10 +49,7 @@ for vpy in CANDIDATE_VENVS:
         cmd = [str(vpy), str(CURRENT_FILE)] + sys.argv[1:]
         sys.exit(subprocess.call(cmd))
 
-if (ROOT / "ragengine").exists():
-    ENGINE_DIR = ROOT / "ragengine"
-else:
-    ENGINE_DIR = ROOT
+ENGINE_DIR = next((ROOT / d for d in ("chatbot", "ragengine") if (ROOT / d / "ragaudit").exists()), ROOT)
 
 if str(ENGINE_DIR) not in sys.path:
     sys.path.insert(0, str(ENGINE_DIR))
@@ -86,6 +84,8 @@ DB_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://postgres:supersecretpassword@localhost:5432/cyber_audit",
 ).replace("postgresql+asyncpg://", "postgresql://")
+os.environ.setdefault("RAGAUDIT_RETRIEVAL__BACKEND", "pgvector")
+os.environ.setdefault("RAGAUDIT_RETRIEVAL__PG_DSN", DB_URL)
 
 # Target evaluation test cases representing standard CERT-In cybersecurity audit queries
 BENCHMARK_QUERIES = [
@@ -421,11 +421,29 @@ class RAGEvaluator:
             app = Application()
             chat = app.build_chat()
 
+            # Retrieval as chat runs it: hybrid search over rag.vectors and the catalogue.
+            retriever = app.build_retriever()
+            for bench in BENCHMARK_QUERIES:
+                t1 = time.perf_counter()
+                hits = retriever.retrieve(bench["query"], top_k=3)
+                text = " ".join(h.chunk.text for h in hits).lower()
+                matched = any(k.lower() in text for k in bench["expected_keywords"])
+                self.log_result(TestResult(
+                    name=f"Chat retrieval: {bench['id']} ({bench['category']})",
+                    category="Chat Retrieval",
+                    status="PASS" if hits and matched else "FAIL",
+                    latency_ms=(time.perf_counter() - t1) * 1000,
+                    details=f"{len(hits)} passage(s); expected keyword found: {matched}",
+                ))
+
+            t0 = time.perf_counter()
             test_q = "How many audit reports are indexed?"
             answer, _ = chat.ask(test_q)
             lat = (time.perf_counter() - t0) * 1000
 
-            has_answer = bool(answer.text and len(answer.text.strip()) > 0)
+            overview = app.catalog.reports_overview()
+            expected = {str(len(overview)), str(sum(1 for r in overview if r["ingest_status"] == "indexed"))}
+            has_answer = any(n in answer.text for n in expected)
             self.log_result(TestResult(
                 name="Q&A: Structured Count Answering",
                 category="Generation",
@@ -445,7 +463,8 @@ class RAGEvaluator:
             self.log_result(TestResult(
                 name="Q&A: Vulnerability Synthesis & Citations",
                 category="Generation",
-                status="PASS" if answer2.text else "FAIL",
+                # A claim with no verified citation fails; an honest refusal only warns.
+                status="PASS" if citations_cnt else ("WARN" if answer2.abstained else "FAIL"),
                 latency_ms=lat2,
                 details=f"Answer length: {len(answer2.text)} chars with {citations_cnt} citation(s)",
                 metrics={"citations_count": citations_cnt, "latency_s": round(answer2.latency_s, 2)},
@@ -513,7 +532,7 @@ class RAGEvaluator:
             "",
             f"- **Vector Index:** PostgreSQL 16 + pgvector HNSW cosine index (`ix_report_chunks_embedding`)",
             f"- **Embedding Model:** `Qwen3-Embedding-0.6B` (1024 dimensions, local inference)",
-            f"- **Retrieval Latency:** Sub-10ms for pgvector approximate nearest neighbor queries",
+            f"- **Retrieval Latency:** Sub-10ms for direct pgvector SQL (backend search; chat latency is in the Chat Retrieval rows)",
             f"- **Dataset Size:** 180 Audit Reports, 2,563 Vector Chunks",
             "",
             "## 3. How to Run Verification",

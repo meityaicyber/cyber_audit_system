@@ -213,3 +213,30 @@ def crosscheck(
         "problems": problems,
         "ok": not problems,
     }
+
+
+_NO_ID = {"", "NA", "N/A", "NONE", "NULL", "-"}
+
+
+def postgres_report_document(data: dict, observations: list[dict], db_report_id, filename: str = "") -> dict:
+    """Rebuild an ingestable report from its Postgres rows.
+
+    The backend moves findings out of ``reports_data.data`` into the
+    ``detailed_observations`` table, so they are put back here. The id follows
+    the same order as backend/app/routers/pipeline.py, so a report synced here
+    and one posted to /api/ingest-json get the same id.
+    """
+    doc = dict(data)
+    meta = dict(doc.get("report_meta") or {})
+    control = doc.get("document_control") or {}
+    report_id = (meta.get("report_id") or meta.get("title") or control.get("document_id")
+                 or control.get("document_title") or doc.get("report_id") or doc.get("id"))
+    if str(report_id or "").strip().upper() in _NO_ID:
+        report_id = db_report_id
+    meta["report_id"] = str(report_id).strip()
+    if filename and not (meta.get("title") or meta.get("report_title")):
+        meta["report_title"] = filename
+    doc["report_meta"] = meta
+    if observations and not (doc.get("detailed_observations") or doc.get("vulnerabilities")):
+        doc["detailed_observations"] = observations
+    return doc

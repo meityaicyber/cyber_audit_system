@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import logging
 import secrets
+import subprocess
+import sys
 import threading
 from pathlib import Path
 
@@ -39,6 +41,33 @@ _app_singleton: Application | None = None
 #: and a local Ollama processes requests one by one anyway.
 _ask_lock = threading.Lock()
 
+#: Set when reports wait in var/pg_sync. One background process ingests them all.
+_ingest_pending = threading.Event()
+_ingest_worker: threading.Thread | None = None
+
+
+def _queue_ingest(sync_dir: Path) -> None:
+    """Ingest in a child process, so embedding a large report never blocks chat.
+
+    Only for the pgvector backend: an in-memory index here would not see what
+    the child wrote. The file is already on disk, so a crash loses nothing:
+    the next ingest picks it up. Reports arriving during a run share the next one.
+    """
+    global _ingest_worker
+
+    def run() -> None:
+        while True:
+            _ingest_pending.wait()
+            _ingest_pending.clear()
+            code = subprocess.call([sys.executable, "-m", "ragaudit.cli", "ingest", str(sync_dir)])
+            if code:
+                logger.error("background ingest of %s exited with code %s", sync_dir, code)
+
+    if _ingest_worker is None:
+        _ingest_worker = threading.Thread(target=run, name="ingest", daemon=True)
+        _ingest_worker.start()
+    _ingest_pending.set()
+
 
 def get_application() -> Application:
     global _app_singleton
@@ -59,6 +88,18 @@ class AskRequest(BaseModel):
         default=None,
         description="Restrict the answer to these reports. Omit to search everything readable.",
     )
+
+
+class EmbedPayload(BaseModel):
+    texts: list[str]
+    is_query: bool = False
+
+
+class IngestJsonPayload(BaseModel):
+    data: dict
+    report_id: str | None = None
+    source_id: str | None = None   # Postgres report UUID: one file per report
+    wait: bool = False             # pgvector only: ingest now instead of queueing
 
 
 class CitationOut(BaseModel):
@@ -323,14 +364,6 @@ def create_app(application: Application | None = None) -> FastAPI:
             raise HTTPException(status_code=410, detail="staged asset is missing from disk")
         return FileResponse(path)
 
-    class EmbedPayload(BaseModel):
-        texts: list[str]
-        is_query: bool = False
-
-    class IngestJsonPayload(BaseModel):
-        data: dict
-        report_id: str | None = None
-
     @api.post("/api/embed")
     @api.post("/embed")
     def embed_texts(req: EmbedPayload, app: Application = Depends(get_application)):
@@ -352,9 +385,9 @@ def create_app(application: Application | None = None) -> FastAPI:
     @api.post("/ingest-json")
     def ingest_json(req: IngestJsonPayload, app: Application = Depends(get_application)):
         """Directly ingest a standardized JSON report document into the RAG index."""
-        import tempfile
         import json
         import re
+        import uuid
 
         data = req.data
         report_id = req.report_id
@@ -363,31 +396,35 @@ def create_app(application: Application | None = None) -> FastAPI:
                 data["report_meta"] = {}
             data["report_meta"]["report_id"] = str(report_id)
 
-        clean_stem = re.sub(r'[^a-zA-Z0-9_-]', '_', str(report_id or "report"))
-        with tempfile.NamedTemporaryFile("w", prefix=f"{clean_stem}_", suffix=".json", delete=False, encoding="utf-8") as tmp:
-            json.dump(data, tmp)
-            tmp_path = Path(tmp.name)
+        # A stable path, kept on disk: the catalogue owns report ids by source
+        # path, so a temp name would turn every re-ingest into a second copy.
+        # start_rag.py syncs into this same folder.
+        stem = re.sub(r'[^a-zA-Z0-9_-]', '_', str(req.source_id or report_id or uuid.uuid4().hex))
+        sync_dir = app.settings.data_dir / "pg_sync"
+        sync_dir.mkdir(parents=True, exist_ok=True)
+        source = sync_dir / f"{stem}.json"
+        source.write_text(json.dumps(data, default=str), encoding="utf-8")
 
-        try:
-            pipeline = app.build_ingest()
-            ingest_result = pipeline.ingest_paths([tmp_path], force=True)
-            return {
-                "status": "success",
-                "summary": ingest_result.summary(),
-                "outcomes": [
-                    {
-                        "report_id": o.report_id,
-                        "status": o.status,
-                        "chunks": o.chunks,
-                        "findings": o.findings,
-                        "blocking": o.blocking,
-                    }
-                    for o in ingest_result.outcomes
-                ],
-            }
-        finally:
-            if tmp_path.exists():
-                tmp_path.unlink()
+        if app.settings.retrieval.backend == "pgvector" and not req.wait:
+            _queue_ingest(sync_dir)
+            return {"status": "queued", "report_id": report_id, "outcomes": []}
+
+        with _ask_lock:
+            ingest_result = app.build_ingest().ingest_paths([source], force=True)
+        return {
+            "status": "success",
+            "summary": ingest_result.summary(),
+            "outcomes": [
+                {
+                    "report_id": o.report_id,
+                    "status": o.status,
+                    "chunks": o.chunks,
+                    "findings": o.findings,
+                    "blocking": o.blocking,
+                }
+                for o in ingest_result.outcomes
+            ],
+        }
 
     return api
 

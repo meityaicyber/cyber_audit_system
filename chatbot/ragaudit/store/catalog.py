@@ -153,7 +153,8 @@ class Catalog:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+        self._conn = sqlite3.connect(str(self.path), check_same_thread=False, timeout=60)
+        self._conn.execute("PRAGMA journal_mode=WAL")  # chat reads while an ingest process writes
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
         self._migrate()
@@ -553,6 +554,37 @@ class Catalog:
         if where:
             sql.append("WHERE " + " AND ".join(where))
         return int(self._conn.execute(" ".join(sql), params).fetchone()[0])
+
+    def finding_counts(
+        self, columns: Sequence[str], report_ids: Sequence[str] | None = None
+    ) -> list[tuple]:
+        """Rows of (*column values, count), most severe first. ``columns`` is
+        trusted: callers pass fixed names, never user input."""
+        cols = ", ".join(columns)
+        sql = f"SELECT {cols}, COUNT(*) FROM findings"
+        params: list[Any] = []
+        if report_ids:
+            sql += f" WHERE report_id IN ({','.join('?' * len(report_ids))})"
+            params.extend(report_ids)
+        sql += f" GROUP BY {cols} ORDER BY MAX(severity_rank) DESC, COUNT(*) DESC"
+        return [tuple(r) for r in self._conn.execute(sql, params)]
+
+    def value_counts(self, kind: str, report_ids: Sequence[str] | None = None) -> dict[str, int]:
+        """How often each CWE, CVE ('cwe'/'cve') or asset ('asset') occurs, most frequent first."""
+        if kind == "asset":
+            sql, params = "SELECT v.asset AS value, COUNT(*) AS n FROM finding_assets v", []
+        else:
+            sql, params = "SELECT v.value AS value, COUNT(*) AS n FROM finding_identifiers v", []
+        where = [] if kind == "asset" else ["v.kind = ?"]
+        params = [] if kind == "asset" else [kind]
+        if report_ids:
+            sql += " JOIN findings f ON f.finding_key = v.finding_key"
+            where.append(f"f.report_id IN ({','.join('?' * len(report_ids))})")
+            params.extend(report_ids)
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " GROUP BY value ORDER BY n DESC, value"
+        return {r["value"]: r["n"] for r in self._conn.execute(sql, params) if r["value"]}
 
     def severity_breakdown(self, report_ids: Sequence[str] | None = None) -> dict[str, int]:
         sql = "SELECT severity, COUNT(*) AS n FROM findings"
